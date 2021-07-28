@@ -1,0 +1,141 @@
+---
+title: "CYOP - Predicting Airbnb prices"
+author: "Nicolás Sandoval"
+date: "28-07-2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(tidymodels)) install.packages("tidymodels", repos = "http://cran.us.r-project.org")
+if(!require(tidytext)) install.packages("tidytext", repos = "http://cran.us.r-project.org")
+if(!require(lubridate)) install.packages("lubridate", repos = "http://cran.us.r-project.org")
+if(!require(ggrepel)) install.packages("ggrepel", repos = "http://cran.us.r-project.org")
+if(!require(ggmap)) install.packages("ggmap", repos = "http://cran.us.r-project.org")
+if(!require(ggthemes)) install.packages("ggthemes", repos = "http://cran.us.r-project.org")
+if(!require(magrittr)) install.packages("magrittr", repos = "http://cran.us.r-project.org")
+if(!require(visdat)) install.packages("visdat", repos = "http://cran.us.r-project.org")
+
+```
+
+### Abstract
+This report is part of the capstone course of the HarvardX Data Science Professional Certificate program. The objective of this project was to build explore a new dataset and then build a regression system. The dataset used was Airbnb's Amsterdam listing, scraped on 2021/07/04 and available [here](http://data.insideairbnb.com/the-netherlands/north-holland/amsterdam/2021-07-04/visualisations/listings.csv). I decided to predict listing prices based on the rest of the information in the listing, which included location, reviews, number of rooms, among others. To generate predictions I used 2 different algorithms, regularized linear regression via glmnet and gradient boosted trees, using the XGBoost.
+While linear regression was much faster to run, the gradient boosted trees method gave a significant improvement to the target metric (RMSE).
+
+
+
+## Introduction
+
+```{r load dataset}
+dataset=read_csv("listings.csv")
+dataset%<>%mutate(price=parse_number(price))
+```
+
+```{r}
+set.seed(2807)
+split=initial_split(dataset, prop = 0.85)
+train_set=training(split)
+test_set=testing(split)
+```
+
+
+The dataset contains 16724 observations of 74 variables, with a mixture of categorical and numerical information, covering Airbnb listing for Amsterdam and surrounding areas as it appeared on the Airbnb website on July 4th, 2021.
+The goal of this project is to predict the price of each listing, based on the rest of the listing information.
+The price column has character data ("$150.00"), but it's easy to convert to numeric via parse_number.
+
+```{r}
+train_set%>%ggplot(aes(price))+geom_density()+labs(title="Price distribution")
+
+```
+```{r}
+train_set%<>%mutate(price=log(price+1))
+train_set%>%ggplot(aes(price))+geom_density()+labs(title="Price distribution", x="Log transformed price")
+
+
+```
+
+Prices go from 0 to 8000 USD per night and distribution has a significant skew, which goes against the normally-distributed assumption made for linear models. For that reason I log-transformed the price information. I also added 1 to every value in order to avoid listings set to $0 from returning NA. 
+After the transformation the data looks much close to a normal distribution.
+To check for missing data I used the vis_dat function, which let me inspect the columns at a glance.
+```{r}
+train_set%>%select_if(is.numeric)%>%vis_dat()
+```
+The numeric rows with missing data seem to be related to reviews and bedrooms, but it might not matter.
+This will be determined in the methodology section.
+
+
+
+##Methodology and analysis
+
+#Exploratory Data Analysis
+
+
+Since I hadn't worked with geographical data in the context of machine learning, I was interested in testing if it had predictive power, so I started by visualizing it.
+```{r}
+train_set%>%
+  ggplot(aes(longitude, latitude, color=neighbourhood_cleansed))+
+  geom_point(size=1)+scale_color_viridis_d()+theme(legend.position = "none") 
+```
+The neighborhoods appear clearly clustered, so I decided to check if there were geographical patterns in the price data.
+```{r}
+train_mu=mean(train_set$price)
+train_set%>%
+  group_by(latitude=round(latitude,2),
+           longitude=round(longitude,2))%>%
+  summarize(price=mean(price))%>%
+  ggplot(aes(longitude, latitude, color=price))+
+  geom_point()+scale_color_gradient2(high = "yellow", low = "blue", midpoint = train_mu)
+
+```
+There appear to be some high and low prices regions, but the effect does not seem large.
+
+The next geographical variable I looked at was neighborhood_cleansed, which has the information used for colors in the first graph.
+
+```{r}
+train_set%>%group_by(neighbourhood_cleansed)%>%summarize(price=mean(price-train_mu))%>%
+  ggplot(aes(price,reorder(neighbourhood_cleansed,price)))+geom_col()+labs(x="Log distance from the mean price", y="Neighborhood")
+```
+
+This appears to have a more significant effect than raw location data.
+
+The next variable I checked was room type.
+
+```{r}
+train_set%>%group_by(room_type)%>%summarize(price=mean(price-train_mu))%>%
+  ggplot(aes(price,reorder(room_type,price)))+geom_col()+labs(title="Price by room type", y="Room type", x="Log distance from the mean price")
+```
+It appears only entire properties have above average prices.
+
+
+For numeric variables I built a correlation matrix.
+```{r}
+cor_matrix<- train_set%>% 
+  dplyr::select(where(is.numeric), -id,-host_id, -scrape_id) %>% 
+  na.omit() %>% 
+  cor()
+```
+
+
+After this initial review of the variables I started building models, testing performance using 10-fold cross validation.
+The first model I tested used only location information (neighbourhood_cleansed, longitude, latitude) and served as a benchmark for the rest of the models. The regularization penalty was tuned via cross validation but the optimal value was 0, that is, no regularization.
+This initial model returned a mean RMSE of 0.975.
+ 
+Next I tested property type and room type as predictors, which decreased the RMSE to 0.890.
+Once again the best regularization penalty was 0.
+
+My next attempt was combining the 2 models which reducied the RMSE to 0.861.
+
+Because availability data appeared to have high correlation to price, I added that to the combined model, and it decreased the RMSE to 0.835.
+
+My attemps at adding more predictors after this did not improve the linear regression model, for example, adding `accomodates`, which also had a high correlation with price decreased the RMSE to 0.865.
+
+After this I moved onto gradient boosted trees, using the same predictors as the best linear model. The model was also tuned via cross validation coupled with grid search for several parameters (mtry, number of trees and learn rate). During training the best model returned an RMSE of 0.809, lower than every linear regression model.
+
+
+
+
+
+
+
+

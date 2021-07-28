@@ -1,2 +1,2 @@
 # CYOedx
-Predicting deviations from weather forecasts
+Predicting Airbnb prices from the listing information
