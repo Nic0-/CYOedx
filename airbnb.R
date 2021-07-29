@@ -56,16 +56,19 @@ folds=vfold_cv(train_set)
 #recipes
 #first one uses only location
 location_rec=recipe(price~neighbourhood_cleansed+longitude+latitude,data=train_set)%>%
-  step_dummy(all_nominal())%>%step_normalize(all_predictors())
+  step_normalize(all_numeric_predictors())%>%
+  step_dummy(all_nominal())
 #2nd uses property type and room type
 
 type_rec=recipe(price~property_type+room_type,data=train_set)%>%
+  step_normalize(all_numeric_predictors())%>%
   step_other(property_type)%>%
-  step_dummy(all_nominal())%>%step_normalize(all_predictors())
+  step_dummy(all_nominal())
 #3rd one combines the first 2
 loc_type_rec=recipe(price~property_type+room_type+neighbourhood_cleansed+longitude+latitude,data=train_set)%>%
+  step_normalize(all_numeric_predictors())%>%
   step_other(property_type)%>%
-  step_dummy(all_nominal())%>%step_normalize(all_predictors())
+  step_dummy(all_nominal())
 
 #4th one was an attempt as using bathroom information, which consisted of character columns, 
 #to generate numeric (number of baths) and categorical (shared baths vs private) predictors
@@ -75,13 +78,19 @@ bath_location_rec=recipe(price~neighbourhood_cleansed+property_type+room_type+lo
   step_dummy(all_nominal())%>%step_normalize(all_predictors())
 
 #5th one adds availability_30 to the 3rd recipe
+
 comb_avail_rec=recipe(price~property_type+room_type+neighbourhood_cleansed+longitude+latitude+availability_30,data=train_set)%>%
+  step_normalize(all_numeric_predictors())%>%
   step_other(property_type)%>%
-  step_dummy(all_nominal())%>%step_normalize(all_predictors())
+  step_dummy(all_nominal())
+
 #6th one adds accomodates to the 5th recipe
-accom_rec=recipe(price~property_type+room_type+neighbourhood_cleansed+longitude+latitude+availability_30+accomodates,data=train_set)%>%
+accom_rec=recipe(price~property_type+room_type+neighbourhood_cleansed+longitude+latitude
+                 +availability_30
+                 +accommodates,data=train_set)%>%
+  step_normalize(all_numeric_predictors())%>%
   step_other(property_type)%>%
-  step_dummy(all_nominal())%>%step_normalize(all_predictors())
+  step_dummy(all_nominal())
 
 #setting tuning options
 met=metric_set(rmse)
@@ -133,5 +142,20 @@ bt_tune %>%
   collect_metrics() %>%
   arrange(mean)
 
+#choosing the best xgboost tuning
+bt_fit = bt_wflow %>%
+  finalize_workflow(select_best(bt_tune)) %>%
+  fit(train_set)
+
+#loading the test set and transforming the price to log
+test_set=testing(split)
+test=test_set%>%mutate(price=log(price+1))
+
+#generating the final predictions using the best linear model
+lm_fit%>%augment(test) %>%
+  rmse(price, .pred)
+#generating the final predictions using the xgboost model
+bt_fit%>%augment(test) %>%
+  rmse(price, .pred)
 
 

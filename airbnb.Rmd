@@ -148,29 +148,51 @@ folds=vfold_cv(train_set)
 
 ```{r recipe}
 location_rec=recipe(price~neighbourhood_cleansed+longitude+latitude,data=train_set)%>%
-  step_dummy(all_nominal())%>%step_normalize(all_predictors())
+  step_normalize(all_numeric_predictors())%>%
+  step_dummy(all_nominal())
 
-loc_type_rec=recipe(price~property_type+room_type+neighbourhood_cleansed+longitude+latitude,data=train_set)%>%
-  step_other(property_type)%>%
-  step_dummy(all_nominal())%>%step_normalize(all_predictors())
+summary(location_rec)
+tidy(location_rec)
 
 type_rec=recipe(price~property_type+room_type,data=train_set)%>%
+   step_normalize(all_numeric_predictors())%>%
   step_other(property_type)%>%
-  step_dummy(all_nominal())%>%step_normalize(all_predictors())
+  step_dummy(all_nominal())
+  
 
-bath_location_rec=recipe(price~neighbourhood_cleansed+property_type+room_type+longitude+latitude+shared_bath+no_bath,data=train_set)%>%
+loc_type_rec=recipe(price~property_type+room_type+neighbourhood_cleansed+longitude+latitude,data=train_set)%>%
+  step_normalize(all_numeric_predictors())%>%
   step_other(property_type)%>%
-  step_impute_mode(shared_bath, no_bath)%>%
-  step_dummy(all_nominal())%>%step_normalize(all_predictors())
+  step_dummy(all_nominal())
+  
+
+
+
+#bath_location_rec=recipe(price~neighbourhood_cleansed+property_type+room_type+longitude+latitude+shared_bath+no_bath,data=train_set)%>%
+ # step_other(property_type)%>%
+  #step_impute_mode(shared_bath, no_bath)%>%
+  #step_dummy(all_nominal())%>%step_normalize(all_numeric_predictors())
 
 comb_avail_rec=recipe(price~property_type+room_type+neighbourhood_cleansed+longitude+latitude+availability_30,data=train_set)%>%
+  step_normalize(all_numeric_predictors())%>%
   step_other(property_type)%>%
-  step_dummy(all_nominal())%>%step_normalize(all_predictors())
+  step_dummy(all_nominal())
+  
 
-accom_rec=recipe(price~property_type+room_type+neighbourhood_cleansed+longitude+latitude+availability_30+accomodates,data=train_set)%>%
+accom_rec=recipe(price~property_type+room_type+neighbourhood_cleansed+longitude+latitude
+                 +availability_30
+                 +accommodates,data=train_set)%>%
+  step_normalize(all_numeric_predictors())%>%
   step_other(property_type)%>%
-  step_dummy(all_nominal())%>%step_normalize(all_predictors())
+  step_dummy(all_nominal())
 
+lin_rec_top=recipe(price~property_type+room_type+neighbourhood_cleansed+longitude+latitude
+                 +availability_30
+                 +accommodates+calculated_host_listings_count_private_rooms,data=train_set)%>%
+  step_normalize(all_numeric_predictors())%>%
+  step_other(property_type)%>%
+  step_dummy(all_nominal())
+  
 
 tidy(simple_rec)
 
@@ -188,9 +210,9 @@ lm_model = linear_reg(penalty = tune()) %>% set_engine("glmnet")
 lm_wflow = 
   workflow() %>% 
   add_model(lm_model) %>% 
-  add_recipe(accom_rec)
+  add_recipe(lin_rec_top)
 
-lm_tune=lm_wflow%>%  tune_grid(resamples=folds,metrics=met, grid=tibble(penalty=seq(0,0.01,0.0001)))
+lm_tune=lm_wflow%>%  tune_grid(resamples=folds,metrics=met, grid=tibble(penalty=seq(0,1,0.01)))
 lm_tune%>%collect_metrics()%>%arrange(mean)
 
 autoplot(lm_tune)
@@ -199,23 +221,23 @@ autoplot(lm_tune)
 
 
 location information
-0.975        
+0.545        
 penalty 0
 
 property and room type
-0.890
+0.496
 penalty 0
 
 previous 2 models together
-0.861
-penalty 0.001
+0.496
+penalty 0
 
 combined models plus availability
  0.835
 penalty 0
 
 previous model plus accomodates
-0.861
+0.753    
 penalty 0.0001
 
 
@@ -244,8 +266,8 @@ bt_tune = bt_wflow %>%
   tune_grid(folds,
             metrics = met,
             control = grid_control,
-            grid =crossing(mtry = c(7),
-                            trees = seq(1000, 1500, 25), learn_rate=c(0.01)))
+            grid =crossing(mtry = c(3,4,7),
+                            trees = seq(800, 1500, 100), learn_rate=c(0.01)))
 
 autoplot(bt_tune)
 
@@ -258,8 +280,7 @@ bt_tune %>%
 
 
 ```{r}
-xg_rec= recipe(price~., data=train_set)
-  
+
   
   
   
@@ -274,6 +295,7 @@ heatmaply_cor(d_cor)
 
 
 ```{r apply transformations to test set}
+test_set=testing(split)
 test=test_set%>%mutate(price=log(price+1))
 ```
 
@@ -282,10 +304,10 @@ bt_fit = bt_wflow %>%
   finalize_workflow(select_best(bt_tune)) %>%
   fit(train_set)
 
-final=bt_fit %>%
-  augment(test) %>%
+lm_fit%>%augment(test) %>%
+  rmse(price, .pred)
+bt_fit%>%augment(test) %>%
   rmse(price, .pred)
 
-lm_fit%>%augment(test)
 ```
 
