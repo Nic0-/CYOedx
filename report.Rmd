@@ -6,7 +6,7 @@ output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = FALSE)
 if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
 if(!require(tidymodels)) install.packages("tidymodels", repos = "http://cran.us.r-project.org")
 if(!require(tidytext)) install.packages("tidytext", repos = "http://cran.us.r-project.org")
@@ -27,12 +27,12 @@ While linear regression was much faster to run, the gradient boosted trees metho
 
 ## Introduction
 
-```{r load dataset}
+```{r load dataset,include=FALSE}
 dataset=read_csv("listings.csv")
 dataset%<>%mutate(price=parse_number(price))
 ```
 
-```{r}
+```{r,include=FALSE}
 set.seed(2807)
 split=initial_split(dataset, prop = 0.85)
 train_set=training(split)
@@ -40,7 +40,7 @@ test_set=testing(split)
 ```
 
 
-The dataset contains 16724 observations of 74 variables, with a mixture of categorical and numerical information, covering Airbnb listing for Amsterdam and surrounding areas as it appeared on the Airbnb website on July 4th, 2021.
+The dataset contains 16724 observations of 74 variables, with a mixture of categorical and numerical information, covering Airbnb listing for Amsterdam and surrounding areas as it appeared on the Airbnb website on July 4th, 2021. The data was split into training and testing sets using a 0.85/0.15 split.
 The goal of this project is to predict the price of each listing, based on the rest of the listing information.
 The price column has character data ("$150.00"), but it's easy to convert to numeric via parse_number.
 
@@ -72,12 +72,16 @@ This will be determined in the methodology section.
 
 
 Since I hadn't worked with geographical data in the context of machine learning, I was interested in testing if it had predictive power, so I started by visualizing it.
+
+
 ```{r}
 train_set%>%
   ggplot(aes(longitude, latitude, color=neighbourhood_cleansed))+
   geom_point(size=1)+scale_color_viridis_d()+theme(legend.position = "none") 
 ```
 The neighborhoods appear clearly clustered, so I decided to check if there were geographical patterns in the price data.
+
+
 ```{r}
 train_mu=mean(train_set$price)
 train_set%>%
@@ -132,10 +136,14 @@ My attemps at adding more predictors after this did not improve the linear regre
 
 After this I moved onto gradient boosted trees, using the same predictors as the best linear model. The model was also tuned via cross validation coupled with grid search for several parameters (mtry, number of trees and learn rate). During training the best model returned an RMSE of 0.809, lower than every linear regression model.
 
+## Results
+
+The XGBoost model 
 
 
-
-
-
+###Limitations
+While the XGBoost model gave better results, these are not easily interpretable, and boosted trees models took longer to run and much longer to tune compared to linear models for a slight decrease in RMSE.
+###Future work
+One thing that has a lot of potential is building an ensemble model using multiple models to improve these results, for example using variables not considered for this analysis, like text fields (property descriptions, names, etc.). This can be done using the tidymodels framework without having to rework the modeling process, which makes it an attractive idea to test.
 
 

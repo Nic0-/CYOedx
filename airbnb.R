@@ -1,14 +1,4 @@
----
-title: "Predicting Airbnb prices"
-author: "Nicolás Sandoval"
-date: "28-07-2021"
-output: pdf_document
-editor_options: 
-  chunk_output_type: console
----
-
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+#load packages
 if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
 if(!require(tidymodels)) install.packages("tidymodels", repos = "http://cran.us.r-project.org")
 if(!require(textrecipes)) install.packages("textrecipes", repos = "http://cran.us.r-project.org")
@@ -20,171 +10,86 @@ if(!require(ggmap)) install.packages("ggmap", repos = "http://cran.us.r-project.
 if(!require(ggthemes)) install.packages("ggthemes", repos = "http://cran.us.r-project.org")
 if(!require(magrittr)) install.packages("magrittr", repos = "http://cran.us.r-project.org")
 if(!require(heatmaply)) install.packages("heatmaply", repos = "http://cran.us.r-project.org")
-
-```
-
-```{r load dataset}
+#load dataset
 dataset=read_csv("listings.csv")
 dataset%<>%mutate(price=parse_number(price))
-```
-
-```{r}
+#splitting the data
 set.seed(2807)
 split=initial_split(dataset, prop = 0.85)
 train_set=training(split)
 test_set=testing(split)
-```
-
-```{r}
-train_set%>%group_by(price)%>%
-  summarize(count=n())
-```
-The data was scraped on July 4th, 2021.
-The dataset contains 16724 observations of 74 variables, with a mixture of categorical and numerical information.
-Some rows are not useful for this analysis, for example, the URL for the listing, the URL for the host's page, the URL for picture of the listing, etc. Some columns also contain no information, such as `bathrooms`
-The goal of this project is to predict the price of each listing, based on the rest of the listing information.
-The price column has character data ("$150.00"), but it's easy to convert to numeric via parse_number.
-Prices go from 0 to 8000 USD per night.
-```{r}
+#visualizations
 train_set%>%
   ggplot(aes(longitude, latitude, color=neighbourhood_cleansed))+
   geom_point(size=1)+scale_color_viridis_d()+theme(legend.position = "none") 
-```
-
-```{r}
 train_set%>%ggplot(aes(price))+geom_density()
+
+#log transforming the price
 train_set%>%ggplot(aes(log(price+1)))+geom_density()
-train_set%<>%mutate(price=log(price+1))
-train_set%>%with(range(price))
-train_mu=mean(train_set$price)
 
+train_mu=mean(train_set$price)#calculating the mean for graphs
 
+#latitude and longitude vs price
 train_set%>%
-  #mutate(price=parse_number(price))%>%
   group_by(latitude=round(latitude,2),
            longitude=round(longitude,2))%>%
   summarize(price=mean(price))%>%
   ggplot(aes(longitude, latitude, color=price))+
   geom_point()+scale_color_gradient2(high = "yellow", low = "blue", midpoint = train_mu)
 
-price_tble=train_set%>%
- #mutate(price_num=parse_number(price))%>%
-  select(price,price_num)
-```
 
-```{r}
-train_head=train_set%>%head()
-select_test=train_head%>%select(-contains("url"))
-```
-
-```{r}
+#investigating categorical variables
 train_set%>%group_by(neighbourhood_cleansed)%>%summarize(price=mean(price-train_mu))%>%
   ggplot(aes(price,reorder(neighbourhood_cleansed,price)))+geom_col()
 
 train_set%>%group_by(room_type)%>%summarize(price=mean(price-train_mu))%>%
   ggplot(aes(price,reorder(room_type,price)))+geom_col()
 
-train_set%>%filter(bedrooms<15)%>%
-  ggplot(aes(bedrooms,price, group=bedrooms))+geom_boxplot()
-
-train_set%>%filter(bedrooms<15)%>%
-  ggplot(aes(bedrooms,price))+geom_smooth()
-
-train_set%>%drop_na(bedrooms)%>%
-  with(range(bedrooms))
-train_set%>%
-  mutate(bath_bed_ratio=parse_number(bathrooms_text)/bedrooms)%>%
-  ggplot(aes(bath_bed_ratio,price))+geom_point()
-
-#listing with shared baths have lower prices on average
-train_set%>%mutate(bath_type=if_else(
-  str_detect(bathrooms_text, "shared"), "Shared", "Private"))%>%
-  group_by(bath_type)%>%summarize(price=mean(price))%>%
-  ggplot(aes(bath_type,price-train_mu))+geom_col()
-
-bath_parse=function(x){
-  if_else(str_detect(x, regex("Half-bath", ignore_case = TRUE)), 0.5, parse_number(x)
-  )
-}
-
-train_set%>%
-  mutate(bathrooms=bath_parse(bathrooms_text), bath_bed_ratio=bathrooms/bedrooms)%>%
-  ggplot(aes(bath_bed_ratio,price))+geom_point()
-
-#listing with 0 bathrooms have low prices
-train_set%>%
-  mutate(bathrooms=bath_parse(bathrooms_text), no_bath=if_else(
-    bathrooms==0, "no bath", "has baths"))%>%
-  group_by(no_bath)%>%summarize(price=mean(price-train_mu))%>%
-  ggplot(aes(no_bath,price))+geom_col()
-
-train_set%>%
-  group_by(host_id)%>%
-  summarize(price=mean(price))%>%ggplot(aes(host_id,price))+
-  geom_point()
-
 train_set%>%
   group_by(property_type)%>%
   summarize(price=mean(price))%>%ggplot(aes(reorder(property_type,price), price))+
   geom_col()
 
-train_set%>%ggplot(aes(minimum_nights,price))+geom_point()
-
-train_set%>%ggplot(aes(number_of_reviews, price))+geom_point()
-
-```
-
-```{r}
-bath_type=function(x){
-  if_else(str_detect(x, "shared"), "Shared", "Private")
-}
-
-train_set%<>%mutate(shared_bath=as.factor(bath_type(bathrooms_text)),bathrooms=bath_parse(bathrooms_text), no_bath=if_else(
-    bathrooms==0, "no bath", "has baths"))
-train_set%>%group_by(no_bath)%>%summarize(count=n())
+#generating folds for modeling
 folds=vfold_cv(train_set)
 
-```
-
-```{r recipe}
+#recipes
+#first one uses only location
 location_rec=recipe(price~neighbourhood_cleansed+longitude+latitude,data=train_set)%>%
   step_dummy(all_nominal())%>%step_normalize(all_predictors())
-
-loc_type_rec=recipe(price~property_type+room_type+neighbourhood_cleansed+longitude+latitude,data=train_set)%>%
-  step_other(property_type)%>%
-  step_dummy(all_nominal())%>%step_normalize(all_predictors())
+#2nd uses property type and room type
 
 type_rec=recipe(price~property_type+room_type,data=train_set)%>%
   step_other(property_type)%>%
   step_dummy(all_nominal())%>%step_normalize(all_predictors())
+#3rd one combines the first 2
+loc_type_rec=recipe(price~property_type+room_type+neighbourhood_cleansed+longitude+latitude,data=train_set)%>%
+  step_other(property_type)%>%
+  step_dummy(all_nominal())%>%step_normalize(all_predictors())
 
+#4th one was an attempt as using bathroom information, which consisted of character columns, 
+#to generate numeric (number of baths) and categorical (shared baths vs private) predictors
 bath_location_rec=recipe(price~neighbourhood_cleansed+property_type+room_type+longitude+latitude+shared_bath+no_bath,data=train_set)%>%
   step_other(property_type)%>%
   step_impute_mode(shared_bath, no_bath)%>%
   step_dummy(all_nominal())%>%step_normalize(all_predictors())
 
+#5th one adds availability_30 to the 3rd recipe
 comb_avail_rec=recipe(price~property_type+room_type+neighbourhood_cleansed+longitude+latitude+availability_30,data=train_set)%>%
   step_other(property_type)%>%
   step_dummy(all_nominal())%>%step_normalize(all_predictors())
-
+#6th one adds accomodates to the 5th recipe
 accom_rec=recipe(price~property_type+room_type+neighbourhood_cleansed+longitude+latitude+availability_30+accomodates,data=train_set)%>%
   step_other(property_type)%>%
   step_dummy(all_nominal())%>%step_normalize(all_predictors())
 
-
-tidy(simple_rec)
-
-```
-
-```{r tuning}
+#setting tuning options
 met=metric_set(rmse)
 grid_control=control_grid(extract=extract_model,save_pred = TRUE, save_workflow = TRUE)
-```
 
-```{r linear model}
+#setting up the linear model
 lm_model = linear_reg(penalty = tune()) %>% set_engine("glmnet")
-```
-```{r workflow}
+#this section was modified and repeated for each recipe to find optimal penalties for each one, the report has the RMSE and penalties for each one.
 lm_wflow = 
   workflow() %>% 
   add_model(lm_model) %>% 
@@ -194,45 +99,19 @@ lm_tune=lm_wflow%>%  tune_grid(resamples=folds,metrics=met, grid=tibble(penalty=
 lm_tune%>%collect_metrics()%>%arrange(mean)
 
 autoplot(lm_tune)
-
-```
-
-
-location information
-0.975        
-penalty 0
-
-property and room type
-0.890
-penalty 0
-
-previous 2 models together
-0.861
-penalty 0.001
-
-combined models plus availability
- 0.835
-penalty 0
-
-previous model plus accomodates
-0.861
-penalty 0.0001
-
-
-```{r}
+#choosing the best linear model
 lm_fit=lm_wflow %>%
   finalize_workflow(select_best(lm_tune)) %>%
   fit(train_set)
-```
 
-```{r}
+#setting up xgboost 
 bt_model =
   boost_tree(mode="regression",
-            mtry = tune(),
+             mtry = tune(),
              trees = tune(),
              learn_rate = tune()
-           #  ,learn_rate = tune(),tree_depth = tune(), min_n = tune(), loss_reduction = tune(), sample_size = tune()
-             )%>%
+             #  ,learn_rate = tune(),tree_depth = tune(), min_n = tune(), loss_reduction = tune(), sample_size = tune()
+  )%>%
   set_engine("xgboost")
 
 bt_wflow = 
@@ -240,12 +119,13 @@ bt_wflow =
   add_model(bt_model) %>% 
   add_recipe(accom_rec)
 
+#this section was modified multiple times to find the best tuning parameters as doing full grid search was not possible on my computer
 bt_tune = bt_wflow %>%
   tune_grid(folds,
             metrics = met,
             control = grid_control,
             grid =crossing(mtry = c(7),
-                            trees = seq(1000, 1500, 25), learn_rate=c(0.01)))
+                           trees = seq(1000, 1500, 25), learn_rate=c(0.01)))
 
 autoplot(bt_tune)
 
@@ -253,39 +133,5 @@ bt_tune %>%
   collect_metrics() %>%
   arrange(mean)
 
-```
 
-
-
-```{r}
-xg_rec= recipe(price~., data=train_set)
-  
-  
-  
-  
-library(heatmaply)
-
-
-
-heatmaply_cor(d_cor)
-
-```
-
-
-
-```{r apply transformations to test set}
-test=test_set%>%mutate(price=log(price+1))
-```
-
-```{r}
-bt_fit = bt_wflow %>%
-  finalize_workflow(select_best(bt_tune)) %>%
-  fit(train_set)
-
-final=bt_fit %>%
-  augment(test) %>%
-  rmse(price, .pred)
-
-lm_fit%>%augment(test)
-```
 
